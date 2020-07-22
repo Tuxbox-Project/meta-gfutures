@@ -1,12 +1,65 @@
 #!/bin/sh
 #set -x
 
-# set basic parameters. TODO: make some parts configuarble e.g. url
-machine="hd51"
-url="https://update.tuxbox-neutrino.org/dist/$machine/3.0.3/images"
+# use common config file, shared with stb-flash.lua for the same setup
+FLASH_CONFIG_FILE="/etc/flash.conf"
+
+# return string from config file
+# parameter 1 key name
+# parameter 2 default value
+# parameter 3 alternate config file path
+get_config_string() {
+	KEY=$1
+	VAL=$2
+	CONFIG_FILE=$FLASH_CONFIG_FILE
+
+	if [ "$3" != "" ]; then
+		CONFIG_FILE=$3
+	fi
+
+	if test ! -f $CONFIG_FILE; then
+		touch $CONFIG_FILE
+	fi
+
+	RET_TMP="$(cat $CONFIG_FILE | grep $KEY)"
+	RET=`echo "$RET_TMP" | sed 's/'$KEY'=//g'`
+
+	if [ "$RET" = "" ]; then
+		RET=$VAL
+	fi
+
+	echo $RET
+}
+
+# set basic variables from settings
+# get common used image version file, default: /etc/image-version
+IMAGE_VERSION_FILE=`get_config_string "image_version_file" "/etc/image-version"`
+
+# get update url from config file
+url_std=`get_config_string "image_update_url" "file:///media/sda1/service/images" $IMAGE_VERSION_FILE`
+url=`get_config_string "image_update_url" $url_std`
+
+# get info filename from config file
+info_file_name_std=`get_config_string "image_update_info_file" "imageversion" $IMAGE_VERSION_FILE`
+info_file_name=`get_config_string "image_update_info_file" $info_file_name_std`
+
+# get machine from config, get defaults from image-version file
+machine_std=`get_config_string "machine" "hd51" $IMAGE_VERSION_FILE`
+machine=`get_config_string "machine" $machine_std`
+
+# save config file
+save_config() {
+	echo "image_version_file=$IMAGE_VERSION_FILE" 	 > $FLASH_CONFIG_FILE
+	echo "image_update_url=$url"	 		>> $FLASH_CONFIG_FILE
+	echo "image_update_info_file=$info_file_name"	>> $FLASH_CONFIG_FILE
+	echo "machine=$machine"				>> $FLASH_CONFIG_FILE
+}
+
+
 image="neutrino-image_ofgwrite.zip"
 imagesource="$url/$image"
-imageversion_online="$url/imageversion"
+imageversion_online="$url/$info_file_name"
+
 picture_source="/usr/share/tuxbox/neutrino/icons"
 
 rootfs="rootfs.tar.bz2"
@@ -67,6 +120,7 @@ exit_done() {
     rm -rf "$TMPDIR"
     STR_REBOOT="...Reboot"
     STR_START_NEUTRINO="...Restart"
+    save_config
 
     if [[ "$no_update_available" = '1' ]];then
         printf '\n\033[32m%s\n\033[0m' "No update available"
@@ -198,7 +252,7 @@ if [ -z "$2" ] || [ "$2" = 'force' ]; then
     unpack="unzip -x $imagefile -d $imagebase"
 
     curl "$imagesource" -o "$imagefile" || exit_done
-    [ -d "$imagedir" ] && rm -r "$imagedir"
+    #[ -d "$imagedir" ] && rm -r "$imagedir"
 
     echo "$DECOMPRESSING" > "$dev_display"
     printf '\n\033[1m%s\n\033[0m' "$DECOMPRESSING"
