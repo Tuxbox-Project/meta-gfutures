@@ -37,7 +37,7 @@ IMAGE_CMD_hd-emmc () {
     fi
     dd if=/dev/zero of=${IMGDEPLOYDIR}/${IMAGE_NAME}.rootfs.ext4 seek=${ROOTFS_SIZE} count=$COUNT bs=1024
     mkfs.ext4 -F -i 4096 ${IMGDEPLOYDIR}/${IMAGE_NAME}.rootfs.ext4 -d ${WORKDIR}/rootfs
-    ln -sf ${IMAGE_NAME}.rootfs.ext4 ${IMGDEPLOYDIR}/${IMAGE_LINK}.rootfs.ext4
+    ln -sf ${IMAGE_NAME}.rootfs.ext4 ${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.rootfs.ext4
     dd if=/dev/zero of=${EMMC_IMAGE} bs=${BLOCK_SIZE} count=0 seek=$(expr ${EMMC_IMAGE_SIZE} \* ${BLOCK_SECTOR})
     parted -s ${EMMC_IMAGE} mklabel gpt
     parted -s ${EMMC_IMAGE} unit KiB mkpart boot fat16 ${IMAGE_ROOTFS_ALIGNMENT} $(expr ${IMAGE_ROOTFS_ALIGNMENT} \+ ${BOOT_PARTITION_SIZE})
@@ -61,32 +61,72 @@ IMAGE_CMD_hd-emmc () {
     mcopy -i ${WORKDIR}/boot.img -v ${WORKDIR}/STARTUP_LINUX_4 ::
     dd conv=notrunc if=${WORKDIR}/boot.img of=${EMMC_IMAGE} bs=${BLOCK_SIZE} seek=$(expr ${IMAGE_ROOTFS_ALIGNMENT} \* ${BLOCK_SECTOR})
     dd conv=notrunc if=${DEPLOY_DIR_IMAGE}/zImage of=${EMMC_IMAGE} bs=${BLOCK_SIZE} seek=$(expr ${KERNEL_PARTITION_OFFSET} \* ${BLOCK_SECTOR})
-    dd if=${IMGDEPLOYDIR}/${IMAGE_LINK}.rootfs.ext4 of=${EMMC_IMAGE} bs=${BLOCK_SIZE} seek=$(expr ${ROOTFS_PARTITION_OFFSET} \* ${BLOCK_SECTOR})
+    dd if=${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.rootfs.ext4 of=${EMMC_IMAGE} bs=${BLOCK_SIZE} seek=$(expr ${ROOTFS_PARTITION_OFFSET} \* ${BLOCK_SECTOR})
 }
 
 image_packaging() {
-    cd ${DEPLOY_DIR_IMAGE}
-    mkdir -p ${MACHINE}
-    cp ${IMGDEPLOYDIR}/${IMAGE_NAME}.rootfs.tar.bz2 ${MACHINE}/rootfs.tar.bz2
-    cp zImage ${MACHINE}/${KERNEL_FILE}
-    echo ${IMAGE_NAME} > ${MACHINE}/imageversion
-    zip ${IMAGE_NAME}_flavour_${FLAVOUR}_ofgwrite.zip ${MACHINE}/*
-    ln -sf ${IMAGE_NAME}_flavour_${FLAVOUR}_ofgwrite.zip ${IMAGENAME}_ofgwrite.zip
-    rm -Rf ${MACHINE}
-    
-    cd ${DEPLOY_DIR_IMAGE}
-    mkdir -p ${MACHINE}
-    cp -f ${IMGDEPLOYDIR}/${IMAGE_NAME}.emmc.img ${MACHINE}/disk.img
-    echo ${IMAGE_NAME} > ${MACHINE}/imageversion
-    echo ${IMAGE_NAME} > ${DEPLOY_DIR_IMAGE}/imageversion
-    zip ${IMAGE_NAME}_flavour_${FLAVOUR}_usb.zip ${MACHINE}/*
-    ln -sf ${IMAGE_NAME}_flavour_${FLAVOUR}_usb.zip ${IMAGENAME}_usb.zip
-    rm -f ${DEPLOY_DIR_IMAGE}/*.tar
-    rm -f ${DEPLOY_DIR_IMAGE}/*.ext4
-    rm -f ${DEPLOY_DIR_IMAGE}/*.manifest
-    rm -f ${DEPLOY_DIR_IMAGE}/*.json
-    rm -f ${DEPLOY_DIR_IMAGE}/*.img
-    rm -Rf ${MACHINE}
+	META_NAME="meta-neutrino"
+	# In case of changed repository name this keeps compatibilty.
+	# Why: meta-neutrino contains mostly recipes to create a tuxbox image and
+	# neutrino is only a part of image like all the other recipes.
+	# The flavour settings are only relevant for neutrino and for some
+	# neutrino package related environment parts
+	# so only neutrino should be marked with current flavour tags.
+	if [ -e ${COREBASE}/meta-tuxbox ]; then
+		META_NAME="meta-tuxbox"
+	fi
+
+	# We extract the image version from git describe content
+	# general meta version comes from the yocto poky repository and git tags are synchronized
+	# with our meta layers. Only the describe content will be added for our image version.
+	META_TAG=`git -C ${COREBASE}/$META_NAME describe --abbrev=0`
+	META_VERSION=$META_TAG-`git -C ${COREBASE}/$META_NAME rev-list $META_TAG..HEAD --count`
+
+	if [ -z $META_VERSION ]; then
+		META_VERSION=${DISTRO_VERSION_NUMBER}
+	fi
+
+	cd ${DEPLOY_DIR_IMAGE}
+	mkdir -p ${MACHINE}
+
+	RELASE_TYPE="release"
+	if [ ${RELEASE_STATE} == 1 ]; then
+		RELASE_TYPE="beta"
+	elif [ ${RELEASE_STATE} == 2 ]; then
+		RELASE_TYPE="nightly"
+	fi
+
+	IMAGE_FLAVOUR_TAG=""
+	if [ ${FLAVOUR} != ${DISTRO} ]; then
+		IMAGE_FLAVOUR_TAG="${FLAVOUR}-flavour_"
+	fi
+
+	IMAGE_FLAVOUR_SUFFIX=${IMAGE_FLAVOUR_TAG}${RELASE_TYPE}_v${META_VERSION}
+	IMAGE_FILE_NAME_PREFIX=${IMAGE_NAME}_${IMAGE_FLAVOUR_SUFFIX}
+	IMAGE_FILE_NAME_LATEST_PREFIX=${IMAGE_BASENAME}_${MACHINE}_latest_${IMAGE_FLAVOUR_SUFFIX}
+
+	cp ${IMGDEPLOYDIR}/${IMAGE_NAME}.rootfs.tar.bz2 ${MACHINE}/rootfs.tar.bz2
+	cp zImage ${MACHINE}/${KERNEL_FILE}
+	echo ${IMAGE_NAME} > ${MACHINE}/imageversion
+	zip ${IMAGE_FILE_NAME_PREFIX}_ofgwrite.zip ${MACHINE}/*
+	ln -sf ${IMAGE_FILE_NAME_PREFIX}_ofgwrite.zip ${IMAGE_FILE_NAME_LATEST_PREFIX}_ofgwrite.zip
+	rm -Rf ${MACHINE}
+
+	cd ${DEPLOY_DIR_IMAGE}
+	mkdir -p ${MACHINE}
+
+	cp -f ${IMGDEPLOYDIR}/${IMAGE_NAME}.emmc.img ${MACHINE}/disk.img
+	echo ${IMAGE_NAME} > ${MACHINE}/imageversion
+	echo ${IMAGE_NAME} > ${DEPLOY_DIR_IMAGE}/imageversion
+	zip ${IMAGE_FILE_NAME_PREFIX}_usb.zip ${MACHINE}/*
+	ln -sf ${IMAGE_FILE_NAME_PREFIX}_usb.zip ${IMAGE_FILE_NAME_LATEST_PREFIX}_usb.zip
+
+	rm -f ${DEPLOY_DIR_IMAGE}/*.tar
+	rm -f ${DEPLOY_DIR_IMAGE}/*.ext4
+	rm -f ${DEPLOY_DIR_IMAGE}/*.manifest
+	rm -f ${DEPLOY_DIR_IMAGE}/*.json
+	rm -f ${DEPLOY_DIR_IMAGE}/*.img
+	rm -Rf ${MACHINE}
 }
 
 IMAGE_POSTPROCESS_COMMAND += "image_packaging; "
